@@ -26,6 +26,7 @@ import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { createClient } from "@/utils/supabase/client";
+import { IconInnerShadowTop } from "@tabler/icons-react"
 
 // Schemas
 export const loginSchema = z.object({
@@ -140,10 +141,35 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
+      
+      <div className="flex gap-2 mx-auto">
+      <IconInnerShadowTop className="!size-8" />
+      <span className="text-2xl font-semibold">
+        Copyright{" "}
+        <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+          Shield
+        </span>
+      </span>
+      </div>     
       <Card>
         <CardHeader className="text-center">
           <CardTitle className="text-xl">
-            {mode === "login" ? "Welcome back" : "Get Started"}
+            {mode === "login" ? ( 
+              <>
+                Welcome{" "}
+                <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  back
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  Get
+                </span>{" "}
+                Started
+              </>
+            )  
+              }
           </CardTitle>
           <CardDescription>
             {mode === "login" 
