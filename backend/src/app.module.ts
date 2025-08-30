@@ -1,19 +1,39 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { WorksModule } from './works/works.module';
 import { AgentsModule } from './agents/agents.module';
+import { VideoProcessing } from './database/entities/video-processing.entity';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { VideoKeyframe } from './database/entities/video-keyframe.entity';
+import { VideoMetadata } from './database/entities/video-metadata.entity';
 
 @Module({
   imports: [
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get('DB_HOST'),
+        port: configService.get('DB_PORT'),
+        username: configService.get('DB_USERNAME'),
+        password: configService.get('DB_PASSWORD'),
+        database: configService.get('DB_DATABASE'),
+        entities: [VideoProcessing, VideoKeyframe, VideoMetadata],
+        synchronize: configService.get('NODE_ENV') === 'development',
+        logging: true,
+      }),
+      inject: [ConfigService]
+    }),
     ConfigModule.forRoot({
       isGlobal: true,
     }),
     AuthModule,
     WorksModule,
-    AgentsModule
+    AgentsModule,
+
   ],
   controllers: [AppController],
   providers: [AppService],

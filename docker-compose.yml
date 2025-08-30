@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Backend - Your NestJS copyright detection API
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"  # ✅ Backend accessible at localhost:3001 (correct)
+    environment:
+      - NODE_ENV=development
+      - PORT=3001  # ✅ Added explicit PORT environment variable
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/copyright_detector
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=password
+      - DB_DATABASE=copyright_detector
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    networks:
+      - copyright-network
+
+  # Frontend - Your Next.js dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"  # ✅ FIXED: Frontend accessible at localhost:3000
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001
+      - INTERNAL_API_URL=http://backend:3001  # ✅ FIXED: Points to backend on 3001
+      - NODE_ENV=development
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - copyright-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: copyright_detector
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - copyright-network
+
+  # Redis - For future caching needs
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - copyright-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  copyright-network:
+    driver: bridge

@@ -67,7 +67,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
     setFormError(null);
   }, [mode, form]);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+  const apiUrl = process.env.INTERNAL_API_URL ?? "http://localhost:3001";
 
   const onSubmit = async (data: SignUpFormValues | LoginFormValues) => {
     setLoadingAuth(true);
