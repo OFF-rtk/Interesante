@@ -197,6 +197,9 @@ export class ProcessingAgentController {
       id: string;
       frameTimestamp: number;
       perceptualHash: string;
+      dctHash?: string;
+      clipEmbedding?: number[];
+      advancedFeatures?: any;
       frameWidth: number;
       frameHeight: number;
       createdAt: Date;
@@ -216,6 +219,9 @@ export class ProcessingAgentController {
           id: frame.id,
           frameTimestamp: frame.frameTimestamp,
           perceptualHash: frame.perceptualHash,
+          dctHash: frame.dctHash,
+          clipEmbedding: frame.clipEmbedding,
+          advancedFeatures: frame.advancedFeatures,
           frameWidth: frame.frameWidth,
           frameHeight: frame.frameHeight,
           createdAt: frame.createdAt

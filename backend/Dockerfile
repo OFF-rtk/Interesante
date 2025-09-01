@@ -1,40 +1,28 @@
 FROM node:20-alpine
 
-# Install system dependencies (remove version constraints)
+# Install only what Node.js backend needs (NO PYTHON!)
 RUN apk add --no-cache \
+    curl \
     python3 \
     py3-pip \
-    ffmpeg \
-    vips-dev \
-    build-base
+    ffmpeg && \
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    -o /usr/local/bin/yt-dlp && \
+    chmod +x /usr/local/bin/yt-dlp
 
-# Create Python virtual environment
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Install yt-dlp
-RUN pip install --no-cache-dir yt-dlp
-
+# Node.js app setup
 WORKDIR /app
 
-# Copy package files first for better Docker layer caching
 COPY package.json pnpm-lock.yaml ./
 
-# Install pnpm and dependencies
 RUN npm install -g pnpm
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
 COPY . .
-
-# Build the application
 RUN pnpm run build
 
 # Create temp directory with proper permissions
-RUN mkdir -p /tmp/video-processing && \
-    chmod 755 /tmp/video-processing
+RUN mkdir -p /tmp/video-processing && chmod 755 /tmp/video-processing
 
 EXPOSE 3001
-
-# Development command
 CMD ["pnpm", "run", "start:dev"]

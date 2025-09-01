@@ -9,6 +9,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import { ConfigService } from '@nestjs/config';
 
 const execAsync = promisify(exec);
 
@@ -32,13 +33,48 @@ interface FfprobeData {
     streams: FfprobeStream[];
 }
   
-interface FrameHashResult {
+interface AdvancedHashResult {
+    phash: string;
+    dct_hash: string;
+    clip_embedding: number[] | null;
+    advanced_features: {
+        brightness: number;
+        contrast: number;
+        complexity: number;
+        dominant_colors: number[][];
+        edge_density: number;
+        texture_energy?: number;
+    } | null;
+    success: boolean;
+    error?: string;
+}
+
+interface EnhancedFrameHashResult {
     framePath: string;
     timestamp: number;
-    hash: string;
+    hashData: AdvancedHashResult;
     width: number;
     height: number;
 }
+
+// src/types/hash-result.interface.ts
+export interface AiServiceResponse {
+    success: boolean;
+    phash?: string;
+    dct_hash?: string;
+    tf_embedding?: number[]; // or Float32Array depending on your AI service
+    advanced_features: {
+        brightness: number;
+        contrast: number;
+        complexity: number;
+        dominant_colors: number[][];
+        edge_density: number;
+        texture_energy?: number;
+    } | null; // can refine if you know exact structure
+    error?: string;
+}
+  
+  
     
 function getErrorMessage(error: unknown): string {
     if (error instanceof Error) return error.message;
@@ -60,6 +96,7 @@ export class ProcessingAgentService {
 
         @InjectRepository(VideoKeyframe)
         private videoKeyframeRepo: Repository<VideoKeyframe>,
+        private readonly configService: ConfigService,
     ) { }
     
     startProcessing(videoProcessingId: string): void {
@@ -216,11 +253,14 @@ export class ProcessingAgentService {
         }
     }
     
-    private async generatePerceptualHashes(framePaths: string[], videoProcessingId: string): Promise<FrameHashResult[]> {
+    private async generatePerceptualHashes(framePaths: string[], videoProcessingId: string): Promise<EnhancedFrameHashResult[]> {
         this.logger.log(`🧠 Generating AI-enhanced perceptual hashes for ${framePaths.length} frames`)
-        const processedFrames: FrameHashResult[] = [];
+        const processedFrames: EnhancedFrameHashResult[] = [];
 
-        const batchSize = 5;
+        const batchSize = 3;
+        let successCount = 0;
+        let fallbackCount = 0;
+
         for (let i = 0; i < framePaths.length; i += batchSize) {
             const batch = framePaths.slice(i, i + batchSize);
 
@@ -229,18 +269,23 @@ export class ProcessingAgentService {
                     const frameIndex = i + index;
                     const timestamp = frameIndex * 3;
 
-                    const hash = await this.generateFrameHash(framePath);
+                    const hashData = await this.generateFrameHash(framePath);
                     const dimensions = await this.getFrameDimensions(framePath);
 
+                    if (hashData.success) {
+                        successCount++;
+                    } else {
+                        fallbackCount++;
+                    }
                     return {
                         framePath,
                         timestamp,
-                        hash,
+                        hashData,
                         width: dimensions.width,
                         height: dimensions.height,
                     };
                 })
-            );
+            );             
 
             processedFrames.push(...batchResults);
 
@@ -248,23 +293,88 @@ export class ProcessingAgentService {
             await this.updateJobStatus(videoProcessingId, 'processing', Math.floor(progress));
 
             if (i + batchSize < framePaths.length) {
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
 
-        this.logger.log(`✅ Generated ${processedFrames.length} perceptual hashes`);
+        this.logger.log(
+            `✅ Generated ${processedFrames.length} perceptual hashes (success: ${successCount}, fallback: ${fallbackCount})`
+        ); 
+        
         return processedFrames;
     }
 
-    private async generateFrameHash(framePath: string): Promise<string> {
+    private async generateFrameHash(framePath: string): Promise<AdvancedHashResult> {
         try {
-            const imageBuffer = await fs.promises.readFile(framePath);
-            const hash = crypto.createHash('sha256').update(imageBuffer).digest('hex');
-            //TODO: Replace with actual perceptual hashing library (imagehash + PIL)
-            return hash.substring(0, 16);
+            const aiServiceUrl = this.configService.get<string>('AI_SERVICE_URL', 'http://ai-service-5000');
+
+            const response = await fetch(`${aiServiceUrl}/generate-hash`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    image_path: framePath,
+                }),
+                signal: AbortSignal.timeout(30000),
+            });
+
+            if (!response.ok) {
+                throw new Error(`AI service responded with status ${response.status}`);
+            }
+
+            const result: AiServiceResponse = await response.json() as AiServiceResponse;
+
+            if (!result.success || !result.phash || !result.dct_hash) {
+                this.logger.warn(`AI service failed for ${framePath}: ${result.error || 'Unknown error'}`);
+                return await this.generateFallbackHash(framePath);
+            }
+            
+            if (Math.random() < 0.1) {
+                this.logger.log(`🎯 AI service success: pHash=${result.phash.substring(0, 8)}...`)
+            }
+
+            return {
+                phash: result.phash,
+                dct_hash: result.dct_hash,
+                clip_embedding: result.tf_embedding || null,
+                advanced_features: result.advanced_features || null,
+                success: true,
+            };
         } catch (error) {
-            this.logger.warn(`Hash generation failed for ${framePath}: ${getErrorMessage(error)}`);
-            return 'error_hash_' + Math.random().toString(36).substring(7);
+            this.logger.warn(
+                `AI service call failed for ${path.basename(framePath)} : ${getErrorMessage(error)}`,
+            );
+            return await this.generateFallbackHash(framePath);
+        }
+    }
+
+    private async generateFallbackHash(
+        framePath: string
+    ): Promise<AdvancedHashResult> {
+        try {
+            const buffer: Buffer = await fs.promises.readFile(framePath);
+            const hex: string = crypto.createHash('sha256').update(buffer).digest('hex');
+            const short = hex.slice(0, 16);
+      
+            return {
+                phash: short,
+                dct_hash: short,
+                clip_embedding: null,
+                advanced_features: null,
+                success: true
+            };
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+      
+            return {
+                phash: `error_hash_${Math.random().toString(36).slice(2, 10)}`,
+                dct_hash: `error_hash_${Math.random().toString(36).slice(2, 10)}`,
+                clip_embedding: null,
+                advanced_features: null,
+                success: false,
+                error: message
+            };
         }
     }
 
@@ -283,14 +393,17 @@ export class ProcessingAgentService {
         }
     }
 
-    private async saveKeyframesToDatabase(processedFrames: FrameHashResult[], videoProcessingId: string): Promise<void> {
+    private async saveKeyframesToDatabase(processedFrames: EnhancedFrameHashResult[], videoProcessingId: string): Promise<void> {
         this.logger.log(`💾 Saving ${processedFrames.length} keyframes to database`);
 
         const keyframes = processedFrames.map(frame =>
             this.videoKeyframeRepo.create({
                 videoProcessing: { id: videoProcessingId } as VideoProcessing,
                 frameTimestamp: frame.timestamp,
-                perceptualHash: frame.hash,
+                perceptualHash: frame.hashData.phash,
+                dctHash: frame.hashData.dct_hash,
+                clipEmbedding: frame.hashData.clip_embedding,
+                advancedFeatures: frame.hashData.advanced_features,
                 frameWidth: frame.width,
                 frameHeight: frame.height,
                 framePath: null
@@ -334,6 +447,7 @@ export class ProcessingAgentService {
     private async updateJobFrameCount(id: string, frameCount: number): Promise<void> {
         await this.videoProcessingRepo.update(id, { totalFramesExtracted: frameCount });
     }
+
     private async updateJobError(id: string, error: string): Promise<void> {
         await this.videoProcessingRepo.update(id, { 
           status: 'failed', 

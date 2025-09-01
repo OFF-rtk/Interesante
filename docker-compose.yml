@@ -1,41 +1,45 @@
 version: '3.8'
 
 services:
-  # Backend - Your NestJS copyright detection API
+  # Backend - Your NestJS copyright detection API (CLEANED UP)
   backend:
     build: 
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "3001:3001"  # ✅ Backend accessible at localhost:3001 (correct)
+      - "3001:3001"
     environment:
       - NODE_ENV=development
-      - PORT=3001  # ✅ Added explicit PORT environment variable
+      - PORT=3001
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/copyright_detector
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USERNAME=postgres
       - DB_PASSWORD=password
       - DB_DATABASE=copyright_detector
+      - AI_SERVICE_URL=http://ai-service:5000  # NEW: AI service connection
     depends_on:
       postgres:
         condition: service_healthy
+      ai-service:
+        condition: service_healthy  # NEW: Wait for AI service
     volumes:
       - ./backend:/app
       - /app/node_modules
+      - video_processing:/tmp/video-processing  # NEW: Shared volume
     networks:
       - copyright-network
 
-  # Frontend - Your Next.js dashboard
+  # Frontend - Your Next.js dashboard (UNCHANGED)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"  # ✅ FIXED: Frontend accessible at localhost:3000
+      - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:3001
-      - INTERNAL_API_URL=http://backend:3001  # ✅ FIXED: Points to backend on 3001
+      - INTERNAL_API_URL=http://backend:3001
       - NODE_ENV=development
     depends_on:
       - backend
@@ -46,7 +50,29 @@ services:
     networks:
       - copyright-network
 
-  # PostgreSQL Database
+  # NEW: Python AI Service (Isolated ML Environment)
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"  # Expose for debugging
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_ENV=development
+    volumes:
+      - ./ai-service:/app
+      - video_processing:/tmp/video-processing  # NEW: Shared volume for video files
+    networks:
+      - copyright-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s  # Give time for TensorFlow to load
+
+  # PostgreSQL Database (UNCHANGED)
   postgres:
     image: postgres:15-alpine
     restart: always
@@ -67,7 +93,7 @@ services:
     networks:
       - copyright-network
 
-  # Redis - For future caching needs
+  # Redis - For future caching needs (UNCHANGED)
   redis:
     image: redis:7-alpine
     restart: always
@@ -81,6 +107,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  video_processing:  # NEW: Shared volume for video files
 
 networks:
   copyright-network:
