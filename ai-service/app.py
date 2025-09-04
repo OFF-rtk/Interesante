@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import os
 import logging
 from hash_generator import AdvancedHashGenerator
+from feature_comparison import ProductionFeatureComparison
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -9,17 +10,32 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Initialize hash generator
+# Initialize both engines
 hash_generator = AdvancedHashGenerator()
+feature_comparison = ProductionFeatureComparison()
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint for Docker"""
-    return jsonify({
-        "status": "healthy",
-        "tensorflow_available": hash_generator.tf_available,
-        "service": "ai-service"
-    }), 200
+    try:
+        comparison_health = feature_comparison.health_check()
+        return jsonify({
+            "status": "healthy",
+            "tensorflow_available": hash_generator.tf_available,
+            "service": "ai-service",
+            "engines": {
+                "hash_generator": {
+                    "tensorflow_available": hash_generator.tf_available
+                },
+                "feature_comparison": comparison_health
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "service": "ai-service"
+        }), 500
 
 @app.route('/generate-hash', methods=['POST'])
 def generate_hash():
@@ -81,6 +97,167 @@ def generate_batch():
     except Exception as e:
         logger.error(f"Batch generation failed: {e}")
         return jsonify({"error": str(e)}), 500
+
+# 🎯 NEW: Detective Agent Detection Endpoints
+@app.route('/extract-youtube-frames', methods=['POST'])
+def extract_youtube_frames():
+    """Extract frames from YouTube video for detective agent"""
+    try:
+        data = request.get_json()
+        youtube_video_id = data.get('youtube_video_id')
+        max_frames = data.get('max_frames', 50)
+        interval_seconds = data.get('interval_seconds', 5.0)
+        quality = data.get('quality', 'medium')
+        
+        if not youtube_video_id:
+            return jsonify({"error": "youtube_video_id is required"}), 400
+        
+        frames = feature_comparison.extract_youtube_frames(
+            youtube_video_id, max_frames, interval_seconds, quality
+        )
+        
+        # Convert to serializable format
+        result = {
+            "frames": [{
+                "timestamp": frame.timestamp,
+                "phash": frame.phash,
+                "dct_hash": frame.dct_hash,
+                "tf_embedding": frame.tf_embedding,
+                "advanced_features": frame.advanced_features,
+                "width": frame.width,
+                "height": frame.height,
+                "frame_path": frame.frame_path
+            } for frame in frames],
+            "total_frames": len(frames),
+            "success": True
+        }
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"YouTube frame extraction failed: {e}")
+        return jsonify({
+            "error": str(e),
+            "success": False
+        }), 500
+
+@app.route('/analyze-video-similarity', methods=['POST'])
+def analyze_video_similarity():
+    """Analyze similarity between original and suspect video frames"""
+    try:
+        data = request.get_json()
+        original_frames = data.get('original_frames', [])
+        suspect_frames = data.get('suspect_frames', [])
+        options = data.get('options', {})
+        
+        if not original_frames:
+            return jsonify({"error": "original_frames is required"}), 400
+        
+        if not suspect_frames:
+            return jsonify({"error": "suspect_frames is required"}), 400
+        
+        result = feature_comparison.analyze_video_similarity(
+            original_frames, suspect_frames, options
+        )
+        
+        # Convert to serializable format
+        response = {
+            "visual_similarity": result.visual_similarity,
+            "temporal_alignment": result.temporal_alignment,
+            "overall_confidence": result.overall_confidence,
+            "sequence_matches": result.sequence_matches,
+            "algorithm_details": result.algorithm_details,
+            "processing_time_ms": result.processing_time_ms,
+            "success": True
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        logger.error(f"Video similarity analysis failed: {e}")
+        return jsonify({
+            "error": str(e),
+            "success": False
+        }), 500
+
+@app.route('/batch-analyze-suspects', methods=['POST'])
+def batch_analyze_suspects():
+    """Batch analyze multiple suspect videos against original"""
+    try:
+        data = request.get_json()
+        original_frames = data.get('original_frames', [])
+        suspect_videos = data.get('suspect_videos', [])
+        options = data.get('options', {})
+        
+        if not original_frames:
+            return jsonify({"error": "original_frames is required"}), 400
+        
+        if not suspect_videos:
+            return jsonify({"error": "suspect_videos is required"}), 400
+        
+        results = []
+        for suspect in suspect_videos:
+            try:
+                suspect_frames = suspect.get('frames', [])
+                
+                if not suspect_frames:
+                    # Extract frames if not provided
+                    youtube_id = suspect.get('youtube_id')
+                    if youtube_id:
+                        extracted = feature_comparison.extract_youtube_frames(youtube_id)
+                        suspect_frames = [{
+                            "timestamp": f.timestamp,
+                            "features": {
+                                "phash": f.phash,
+                                "dct_hash": f.dct_hash,
+                                "tf_embedding": f.tf_embedding,
+                                "advanced_features": f.advanced_features
+                            },
+                            "width": f.width,
+                            "height": f.height
+                        } for f in extracted]
+                
+                result = feature_comparison.analyze_video_similarity(
+                    original_frames, suspect_frames, options
+                )
+                
+                results.append({
+                    "youtube_id": suspect.get('youtube_id', 'unknown'),
+                    "title": suspect.get('title', 'Unknown'),
+                    "visual_similarity": result.visual_similarity,
+                    "temporal_alignment": result.temporal_alignment,
+                    "overall_confidence": result.overall_confidence,
+                    "sequence_matches": result.sequence_matches,
+                    "algorithm_details": result.algorithm_details,
+                    "processing_time_ms": result.processing_time_ms,
+                    "success": True
+                })
+                
+            except Exception as e:
+                logger.error(f"Individual suspect analysis failed: {e}")
+                results.append({
+                    "youtube_id": suspect.get('youtube_id', 'unknown'),
+                    "title": suspect.get('title', 'Unknown'),
+                    "error": str(e),
+                    "success": False
+                })
+        
+        return jsonify({
+            "results": results,
+            "batch_summary": {
+                "total_processed": len(suspect_videos),
+                "successful": sum(1 for r in results if r.get('success')),
+                "failed": sum(1 for r in results if not r.get('success'))
+            },
+            "success": True
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Batch analysis failed: {e}")
+        return jsonify({
+            "error": str(e),
+            "success": False
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

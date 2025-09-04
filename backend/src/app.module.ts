@@ -9,6 +9,7 @@ import { VideoProcessing } from './database/entities/video-processing.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { VideoKeyframe } from './database/entities/video-keyframe.entity';
 import { VideoMetadata } from './database/entities/video-metadata.entity';
+import { SuspectVideo } from './database/entities/suspect-video.entity';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { VideoMetadata } from './database/entities/video-metadata.entity';
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD'),
         database: configService.get('DB_DATABASE'),
-        entities: [VideoProcessing, VideoKeyframe, VideoMetadata],
+        entities: [VideoProcessing, VideoKeyframe, VideoMetadata, SuspectVideo],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: true,
       }),

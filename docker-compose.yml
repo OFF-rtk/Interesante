@@ -18,11 +18,15 @@ services:
       - DB_PASSWORD=password
       - DB_DATABASE=copyright_detector
       - AI_SERVICE_URL=http://ai-service:5000  # NEW: AI service connection
+      - REDIS_URL=redis//redis:6379
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
     depends_on:
       postgres:
         condition: service_healthy
       ai-service:
         condition: service_healthy  # NEW: Wait for AI service
+      redis:
+        condition: service_started
     volumes:
       - ./backend:/app
       - /app/node_modules

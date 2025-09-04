@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { VideoKeyframe } from './video-keyframe.entity';
 import { VideoMetadata } from './video-metadata.entity';
+import { SuspectVideo } from './suspect-video.entity';
 
 @Entity('video_processing')
 export class VideoProcessing {
@@ -54,4 +55,8 @@ export class VideoProcessing {
 
     @OneToOne(() => VideoMetadata, metadata => metadata.videoProcessing)
     metadata: VideoMetadata;
+
+    // Add this to your VideoProcessing entity
+    @OneToMany(() => SuspectVideo, suspect => suspect.videoProcessing)
+    suspectVideos: SuspectVideo[];
 } 

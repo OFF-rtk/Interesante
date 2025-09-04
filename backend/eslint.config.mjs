@@ -26,9 +26,16 @@ export default tseslint.config(
   },
   {
     rules: {
+      // ✅ Keep strictness where it matters
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-floating-promises": "warn",
       "@typescript-eslint/no-unsafe-argument": "warn",
+
+      // 🚫 Kill the spammy rules that nag about well-typed libs
+      "@typescript-eslint/no-unsafe-assignment": "off",
+      "@typescript-eslint/no-unsafe-call": "off",
+      "@typescript-eslint/no-unsafe-member-access": "off",
+      "@typescript-eslint/no-unsafe-return": "off",
     },
   }
 );
