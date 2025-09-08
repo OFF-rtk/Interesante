@@ -3,7 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { exec } from 'child_process';
 import { VideoKeyframe } from 'src/database/entities/video-keyframe.entity';
 import { VideoMetadata } from 'src/database/entities/video-metadata.entity';
-import { VideoProcessing } from 'src/database/entities/video-processing.entity';
+import { VideoProcessing, VideoProcessingStatus } from 'src/database/entities/video-processing.entity'; // ✅ Import enum
 import { DeepPartial, Repository } from 'typeorm';
 import { promisify } from 'util';
 import * as path from 'path';
@@ -24,7 +24,7 @@ interface YtDlpJson {
 }
   
 interface FfprobeStream {
-    codec_type?: string; // "video", "audio", etc.
+    codec_type?: string;
     width?: number;
     height?: number;
 }
@@ -57,12 +57,11 @@ interface EnhancedFrameHashResult {
     height: number;
 }
 
-// src/types/hash-result.interface.ts
 export interface AiServiceResponse {
     success: boolean;
     phash?: string;
     dct_hash?: string;
-    tf_embedding?: number[]; // or Float32Array depending on your AI service
+    tf_embedding?: number[];
     advanced_features: {
         brightness: number;
         contrast: number;
@@ -70,18 +69,14 @@ export interface AiServiceResponse {
         dominant_colors: number[][];
         edge_density: number;
         texture_energy?: number;
-    } | null; // can refine if you know exact structure
+    } | null;
     error?: string;
 }
-  
-  
     
 function getErrorMessage(error: unknown): string {
     if (error instanceof Error) return error.message;
     return String(error);
 }
-
-
 
 @Injectable()
 export class ProcessingAgentService {
@@ -122,24 +117,27 @@ export class ProcessingAgentService {
 
             this.logger.log(`📝 Processing: ${job.youtubeUrl}`);
 
-            await this.updateJobStatus(videoProcessingId, 'processing', 10);
+            // ✅ Updated to use enum values
+            await this.updateJobStatus(videoProcessingId, VideoProcessingStatus.PROCESSING, 10);
             const videoId = this.extractYouTubeVideoId(job.youtubeUrl);
             await this.extractVideoMetadata(job.youtubeUrl, videoProcessingId);
 
-            await this.updateJobStatus(videoProcessingId, 'processing', 25);
+            await this.updateJobStatus(videoProcessingId, VideoProcessingStatus.PROCESSING, 25);
             const videoPath = await this.downloadVideo(videoId);
 
-            await this.updateJobStatus(videoProcessingId, 'processing', 45);
+            await this.updateJobStatus(videoProcessingId, VideoProcessingStatus.PROCESSING, 45);
             const keyframes = await this.extractKeyframes(videoPath, videoId);
 
-            await this.updateJobStatus(videoProcessingId, 'processing', 70);
+            await this.updateJobStatus(videoProcessingId, VideoProcessingStatus.PROCESSING, 70);
             const processedKeyframes = await this.generatePerceptualHashes(keyframes, videoProcessingId);
         
-            await this.updateJobStatus(videoProcessingId, 'processing', 85);
+            await this.updateJobStatus(videoProcessingId, VideoProcessingStatus.PROCESSING, 85);
             await this.saveKeyframesToDatabase(processedKeyframes, videoProcessingId);
 
             await this.cleanupTemporaryFiles(videoPath, keyframes);
-            await this.updateJobStatus(videoProcessingId, 'detection', 95);
+            
+            // ✅ Changed from 'detection' to DETECTION enum
+            await this.updateJobStatus(videoProcessingId, VideoProcessingStatus.DETECTION, 95);
             await this.updateJobFrameCount(videoProcessingId, processedKeyframes.length);
             
             this.logger.log(`✅ Processing complete: ${processedKeyframes.length} keyframes processed`);
@@ -290,7 +288,8 @@ export class ProcessingAgentService {
             processedFrames.push(...batchResults);
 
             const progress = Math.min(70 + (i / framePaths.length) * 15, 85);
-            await this.updateJobStatus(videoProcessingId, 'processing', Math.floor(progress));
+            // ✅ Updated to use enum
+            await this.updateJobStatus(videoProcessingId, VideoProcessingStatus.PROCESSING, Math.floor(progress));
 
             if (i + batchSize < framePaths.length) {
                 await new Promise(resolve => setTimeout(resolve, 1000));
@@ -439,7 +438,8 @@ export class ProcessingAgentService {
         }
     }
 
-    private async updateJobStatus(id: string, status: string, progressPercent: number): Promise<void> {
+    // ✅ Updated method signature to use enum type
+    private async updateJobStatus(id: string, status: VideoProcessingStatus, progressPercent: number): Promise<void> {
         await this.videoProcessingRepo.update(id, { status, progressPercent });
         this.logger.log(`📊 Job ${id}: ${status} (${progressPercent}%)`);
     }
@@ -448,11 +448,12 @@ export class ProcessingAgentService {
         await this.videoProcessingRepo.update(id, { totalFramesExtracted: frameCount });
     }
 
+    // ✅ Updated error handling to use enum
     private async updateJobError(id: string, error: string): Promise<void> {
         await this.videoProcessingRepo.update(id, { 
-          status: 'failed', 
-          progressPercent: 0,
-          processingError: error.substring(0, 500)
+            status: VideoProcessingStatus.FAILED, 
+            progressPercent: 0,
+            processingError: error.substring(0, 500)
         });
         this.logger.error(`❌ Job ${id} failed: ${error}`);
     }

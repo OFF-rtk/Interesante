@@ -4,7 +4,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DeepPartial } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { VideoProcessing } from '../../database/entities/video-processing.entity';
+import { VideoProcessing, VideoProcessingStatus } from '../../database/entities/video-processing.entity';
 import { VideoKeyframe } from '../../database/entities/video-keyframe.entity';
 import { VideoMetadata } from '../../database/entities/video-metadata.entity';
 import { SuspectVideo } from '../../database/entities/suspect-video.entity';
@@ -189,7 +189,7 @@ export class DetectiveAgentService {
       throw new Error(`Job ${videoProcessingId} not found`);
     }
 
-    if (job.status !== 'detection') {
+    if (job.status !== VideoProcessingStatus.DETECTION) {
       throw new Error(`Job ${videoProcessingId} is not ready for detection (status: ${job.status})`);
     }
 
@@ -740,11 +740,11 @@ export class DetectiveAgentService {
     const mediumRiskCount = results.filter((r: SuspectVideo) => r.riskLevel === 'MEDIUM').length;
     
     await this.videoProcessingRepo.update(videoProcessingId, {
-      status: 'completed',
+      status: VideoProcessingStatus.COMPLETED, // ✅ Use enum
       progressPercent: 100,
       updatedAt: new Date()
     });
-
+  
     this.logger.log(`✅ Detection completed: ${results.length} suspects found (${highRiskCount} high-risk, ${mediumRiskCount} medium-risk)`);
   }
 
@@ -753,20 +753,39 @@ export class DetectiveAgentService {
    */
   private async completeDetectionWithNoSuspects(videoProcessingId: string): Promise<void> {
     await this.videoProcessingRepo.update(videoProcessingId, {
-      status: 'completed',
+      status: VideoProcessingStatus.COMPLETED, // ✅ Use enum
       progressPercent: 100,
       updatedAt: new Date()
     });
-
+  
     this.logger.log(`ℹ️ Detection completed: No suspect videos found`);
-  }
+  }  
 
   /**
    * ✅ Update detection progress with proper typing
    */
   private async updateProgress(videoProcessingId: string, progress: DetectionProgress): Promise<void> {
+    // Map phase strings to enum values
+    let status: VideoProcessingStatus;
+    switch (progress.phase) {
+      case 'searching':
+        status = VideoProcessingStatus.SEARCHING;
+        break;
+      case 'extracting':
+        status = VideoProcessingStatus.EXTRACTING;
+        break;
+      case 'analyzing':
+        status = VideoProcessingStatus.ANALYZING;
+        break;
+      case 'compiling':
+        status = VideoProcessingStatus.COMPILING;
+        break;
+      default:
+        status = VideoProcessingStatus.DETECTION;
+    }
+  
     await this.videoProcessingRepo.update(videoProcessingId, {
-      status: progress.phase,
+      status,
       progressPercent: progress.progress,
       updatedAt: new Date()
     });
@@ -779,13 +798,14 @@ export class DetectiveAgentService {
    */
   private async updateJobError(id: string, error: string): Promise<void> {
     await this.videoProcessingRepo.update(id, { 
-      status: 'failed', 
+      status: VideoProcessingStatus.FAILED, // ✅ Use enum
       progressPercent: 0,
       processingError: error.substring(0, 500),
       updatedAt: new Date()
     });
     this.logger.error(`❌ Job ${id} failed: ${error}`);
   }
+  
 
   /**
    * ✅ Utility method for delays

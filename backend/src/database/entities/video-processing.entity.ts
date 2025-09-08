@@ -11,6 +11,19 @@ import { VideoKeyframe } from './video-keyframe.entity';
 import { VideoMetadata } from './video-metadata.entity';
 import { SuspectVideo } from './suspect-video.entity';
 
+// ✅ Define proper TypeScript enum for all status values
+export enum VideoProcessingStatus {
+    INTAKE = 'intake',
+    PROCESSING = 'processing',
+    DETECTION = 'detection',
+    SEARCHING = 'searching',        // ← Added for Detective Agent
+    EXTRACTING = 'extracting',      // ← Added for Detective Agent
+    ANALYZING = 'analyzing',        // ← Added for Detective Agent
+    COMPILING = 'compiling',        // ← Added for Detective Agent
+    COMPLETED = 'completed',
+    FAILED = 'failed'
+}
+
 @Entity('video_processing')
 export class VideoProcessing {
     @PrimaryGeneratedColumn('uuid')
@@ -25,12 +38,13 @@ export class VideoProcessing {
     @Column({ type:'varchar', nullable: true })
     videoTitle?: string;
 
+    // ✅ Updated to use TypeScript enum instead of inline array
     @Column({
         type: 'enum',
-        enum: ['intake', 'processing', 'detection', 'completed', 'failed'],
-        default: 'intake',
+        enum: VideoProcessingStatus,
+        default: VideoProcessingStatus.INTAKE,
     })
-    status: string;
+    status: VideoProcessingStatus;  // ← Changed from string to enum type
 
     @Column({ type: 'int', nullable: true })
     etaMinutes?: number;
@@ -56,7 +70,6 @@ export class VideoProcessing {
     @OneToOne(() => VideoMetadata, metadata => metadata.videoProcessing)
     metadata: VideoMetadata;
 
-    // Add this to your VideoProcessing entity
     @OneToMany(() => SuspectVideo, suspect => suspect.videoProcessing)
     suspectVideos: SuspectVideo[];
-} 
+}

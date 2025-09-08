@@ -34,7 +34,6 @@ import { SuspectVideo } from './database/entities/suspect-video.entity';
     AuthModule,
     WorksModule,
     AgentsModule,
-
   ],
   controllers: [AppController],
   providers: [AppService],

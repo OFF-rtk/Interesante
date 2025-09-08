@@ -1,7 +1,7 @@
 import { Injectable, Logger, BadRequestException } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
-import { VideoProcessing } from "src/database/entities/video-processing.entity";
+import { VideoProcessing, VideoProcessingStatus } from "src/database/entities/video-processing.entity"; // ✅ Import enum
 
 @Injectable()
 export class IntakeAgentService {
@@ -22,7 +22,7 @@ export class IntakeAgentService {
         const processing = this.videoProcessingRepo.create({
             userId: userId,
             youtubeUrl: youtubeUrl,
-            status: 'intake',
+            status: VideoProcessingStatus.INTAKE, // ✅ Use enum instead of 'intake' string
             progressPercent: 5,
             etaMinutes: 25
         });
