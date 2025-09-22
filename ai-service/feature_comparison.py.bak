@@ -1,0 +1,480 @@
+#!/usr/bin/env python3
+
+import sys
+import json
+import numpy as np
+import cv2
+import yt_dlp
+import os
+import tempfile
+import logging
+import time
+import random
+import string
+from typing import List, Dict, Optional
+from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from scipy.spatial.distance import cosine
+
+# 🎯 Import your existing modules
+from hash_generator import HashGenerator
+# 🚀 Import new proxy management module
+from proxy_manager import ProductionProxyManager, RateLimiter
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global instances
+proxy_manager = ProductionProxyManager()
+rate_limiter = RateLimiter()
+
+@dataclass
+class FrameFeatures:
+    timestamp: float
+    phash: str
+    dct_hash: str
+    tf_embedding: Optional[List[float]]
+    advanced_features: Dict
+    frame_path: Optional[str] = None
+    width: int = 0
+    height: int = 0
+
+@dataclass
+class SimilarityResult:
+    visual_similarity: float
+    temporal_alignment: float
+    overall_confidence: float
+    sequence_matches: List[Dict]
+    algorithm_details: Dict
+    processing_time_ms: int
+
+@dataclass
+class VideoAnalysisRequest:
+    original_frames: List[Dict]
+    suspect_frames: List[Dict]
+    video_id: str
+    priority: str = "normal"
+
+class VideoComparator:
+    def __init__(self):
+        self.hash_generator = HashGenerator()
+        logger.info("🎯 Video Comparator with Proxy Rotation initialized")
+    
+    def extract_youtube_frames(
+        self, 
+        youtube_video_id: str, 
+        max_frames: int = 50,
+        interval_seconds: float = 5.0,
+        quality: str = "medium",
+        priority: str = "normal"
+    ) -> List[FrameFeatures]:
+        """Extract frames with production-grade proxy rotation and rate limiting"""
+        
+        start_time = time.time()
+        logger.info(f"🎬 Starting frame extraction for {youtube_video_id} (priority: {priority})")
+        
+        # Try multiple proxies if first ones fail
+        max_proxy_attempts = 3
+        for proxy_attempt in range(max_proxy_attempts):
+            try:
+                # Get proxy for this attempt
+                proxy = proxy_manager.get_next_proxy(priority)
+                proxy_available = proxy is not None and proxy != {'http': None, 'https': None}
+                
+                # Apply rate limiting (proxy-aware)
+                rate_limiter.wait_if_needed(priority, proxy_available)
+                
+                return self._download_with_proxy(
+                    youtube_video_id, 
+                    max_frames, 
+                    interval_seconds, 
+                    quality, 
+                    priority, 
+                    proxy,
+                    start_time
+                )
+                
+            except Exception as e:
+                logger.error(f"❌ Attempt {proxy_attempt + 1} failed with proxy {proxy}: {e}")
+                
+                # Mark proxy as failed
+                if proxy:
+                    proxy_manager.mark_proxy_result(proxy, success=False)
+                
+                # If last attempt, raise error
+                if proxy_attempt == max_proxy_attempts - 1:
+                    raise Exception(f"All {max_proxy_attempts} proxy attempts failed. Last error: {e}")
+                
+                # Wait before next attempt
+                wait_time = (proxy_attempt + 1) * 10
+                logger.info(f"⏱️ Waiting {wait_time}s before next proxy attempt...")
+                time.sleep(wait_time)
+    
+    def _download_with_proxy(
+        self,
+        youtube_video_id: str,
+        max_frames: int,
+        interval_seconds: float,
+        quality: str,
+        priority: str,
+        proxy: Optional[Dict],
+        start_time: float
+    ) -> List[FrameFeatures]:
+        """Download video with specific proxy"""
+        
+        # Create unique temp directory
+        random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+        temp_dir = f'/tmp/video-processing/{youtube_video_id}_{random_suffix}'
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        proxy_start_time = time.time()
+        
+        try:
+            video_url = f"https://www.youtube.com/watch?v={youtube_video_id}"
+            
+            # 🚀 Enhanced yt-dlp options with proxy support
+            ydl_opts = {
+                'format': self._get_format_selector(quality),
+                'outtmpl': f'{temp_dir}/video.%(ext)s',
+                'quiet': True,
+                'no_warnings': True,
+                'socket_timeout': 60,
+                'retries': 2,  # Reduced retries for faster proxy switching
+                'fragment_retries': 2,
+                'skip_unavailable_fragments': True,
+                'http_headers': self._get_random_headers(),
+                'extractor_args': {
+                    'youtube': {
+                        'skip': ['dash'],
+                        'player_client': ['android', 'web'],
+                    }
+                }
+            }
+            
+            # Add proxy configuration if available
+            if proxy and proxy.get('http'):
+                ydl_opts['proxy'] = proxy.get('http')
+                logger.info(f"🔄 Using proxy: {proxy_manager._get_proxy_key(proxy)}")
+            else:
+                logger.info(f"🔄 Using direct connection")
+            
+            # Download with proxy
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    logger.info(f"⬇️ Downloading video {youtube_video_id}...")
+                    info = ydl.extract_info(video_url, download=True)
+                    
+                    # Find and verify downloaded file
+                    downloaded_file = self._find_downloaded_file(temp_dir)
+                    if not downloaded_file:
+                        files_found = os.listdir(temp_dir) if os.path.exists(temp_dir) else []
+                        raise Exception(f"No valid video file found. Files: {files_found}")
+                    
+                    if not self._verify_video_file(downloaded_file):
+                        raise Exception(f"Downloaded file is not valid: {downloaded_file}")
+                    
+                    # Record successful download
+                    download_time = time.time() - proxy_start_time
+                    proxy_manager.mark_proxy_result(proxy, success=True, response_time=download_time)
+                    rate_limiter.record_success()
+                    
+                    logger.info(f"✅ Successfully downloaded: {downloaded_file} in {download_time:.1f}s")
+                    
+                except Exception as download_error:
+                    # Record proxy failure
+                    proxy_manager.mark_proxy_result(proxy, success=False)
+                    raise download_error
+            
+            # Extract and process frames
+            raw_frames = self._extract_frames_from_video(
+                downloaded_file, max_frames, interval_seconds
+            )
+            
+            processed_frames = []
+            for i, frame_data in enumerate(raw_frames):
+                frame_path = f"{temp_dir}/frame_{i:04d}.jpg"
+                cv2.imwrite(frame_path, frame_data['frame'])
+                
+                features = self._process_frame_with_hash_generator(
+                    frame_path,
+                    frame_data['timestamp'],
+                    frame_data['frame']
+                )
+                processed_frames.append(features)
+            
+            processing_time = int((time.time() - start_time) * 1000)
+            logger.info(f"✅ Extracted {len(processed_frames)} frames in {processing_time}ms")
+            
+            return processed_frames
+            
+        except Exception as e:
+            logger.error(f"❌ Frame extraction failed: {e}")
+            raise
+        
+        finally:
+            self._cleanup_temp_dir(temp_dir)
+    
+    def _get_format_selector(self, quality: str) -> str:
+        """Conservative format selector for better success rates"""
+        formats = {
+            'high': 'worst[height<=480]/worst',
+            'medium': 'worst[height<=360]/worst', 
+            'low': 'worst[height<=240]/worst'
+        }
+        return formats.get(quality, formats['medium'])
+    
+    def _get_random_headers(self) -> Dict:
+        """Generate realistic headers for proxy use"""
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
+        ]
+        
+        return {
+            'User-Agent': random.choice(user_agents),
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'DNT': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none'
+        }
+    
+    def _find_downloaded_file(self, temp_dir: str) -> Optional[str]:
+        """Find downloaded video file"""
+        try:
+            if not os.path.exists(temp_dir):
+                return None
+            
+            video_extensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.m4v']
+            
+            for filename in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, filename)
+                
+                if not os.path.isfile(file_path) or os.path.getsize(file_path) < 1024:
+                    continue
+                
+                for ext in video_extensions:
+                    if filename.lower().endswith(ext):
+                        return file_path
+                
+                if filename.startswith('video.') and not filename.endswith('.mhtml'):
+                    return file_path
+            
+            return None
+            
+        except Exception:
+            return None
+    
+    def _verify_video_file(self, video_path: str) -> bool:
+        """Verify video file validity"""
+        try:
+            if not os.path.exists(video_path) or os.path.getsize(video_path) < 1024:
+                return False
+            
+            cap = cv2.VideoCapture(video_path)
+            is_valid = cap.isOpened()
+            
+            if is_valid:
+                ret, frame = cap.read()
+                is_valid = ret and frame is not None
+            
+            cap.release()
+            return is_valid
+            
+        except Exception:
+            return False
+    
+    def _process_frame_with_hash_generator(
+        self,
+        frame_path: str,
+        timestamp: float,
+        frame_array: np.ndarray
+    ) -> FrameFeatures:
+        """Process frame with hash generator"""
+        try:
+            hash_results = self.hash_generator.generate_all_features(frame_path)
+            
+            if not hash_results.get('success', False):
+                hash_results = {
+                    'phash': '0' * 64,
+                    'dct_hash': '0' * 16,
+                    'tf_embedding': None,
+                    'advanced_features': {}
+                }
+            
+            return FrameFeatures(
+                timestamp=timestamp,
+                phash=hash_results.get('phash', ''),
+                dct_hash=hash_results.get('dct_hash', ''),
+                tf_embedding=hash_results.get('tf_embedding'),
+                advanced_features=hash_results.get('advanced_features', {}),
+                frame_path=frame_path,
+                width=frame_array.shape[1],
+                height=frame_array.shape[0]
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Frame processing failed: {e}")
+            raise
+    
+    def _cleanup_temp_dir(self, temp_dir: str):
+        """Clean up temporary directory"""
+        try:
+            import shutil
+            shutil.rmtree(temp_dir)
+        except Exception as e:
+            logger.warning(f"⚠️ Cleanup failed: {e}")
+
+    # [Keep all your existing methods - _extract_frames_from_video, etc.]
+    
+    def _extract_frames_from_video(self, video_path: str, max_frames: int, interval_seconds: float) -> List[Dict]:
+        """Extract frames from video"""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise Exception(f"Could not open video: {video_path}")
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
+
+        frame_interval = int(fps * interval_seconds) if fps > 0 else 1
+        frames_to_extract = min(max_frames, int(duration / interval_seconds) if interval_seconds > 0 else max_frames)
+
+        frames = []
+        frame_count = 0
+        extracted_count = 0
+
+        while cap.isOpened() and extracted_count < frames_to_extract:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_count % frame_interval == 0:
+                timestamp = frame_count / fps if fps > 0 else frame_count
+                frames.append({
+                    'frame': frame,
+                    'timestamp': timestamp,
+                    'frame_index': extracted_count
+                })
+                extracted_count += 1
+
+            frame_count += 1
+
+        cap.release()
+        return frames
+
+    def health_check(self) -> Dict:
+        """Health check with proxy and rate limiter stats"""
+        proxy_stats = proxy_manager.get_stats()
+        rate_limiter_stats = rate_limiter.get_stats()
+        
+        return {
+            "status": "healthy",
+            "tensorflow_available": self.hash_generator.tf_available,
+            "capabilities": [
+                "perceptual_hash", 
+                "dct_hash", 
+                "advanced_features", 
+                "tensorflow_embeddings", 
+                "youtube_extraction", 
+                "temporal_analysis", 
+                "proxy_rotation",
+                "rate_limiting"
+            ],
+            "version": "2.1.0",
+            "proxy_stats": proxy_stats,
+            "rate_limiter_stats": rate_limiter_stats
+        }
+
+
+
+def main():
+    """Main function for testing"""
+    
+    if len(sys.argv) < 2:
+        print("Usage: python3 feature_comparison.py <command> [args...]")
+        print("Commands:")
+        print("  health - Health check")
+        print("  extract <youtube_id> - Extract frames from YouTube video")
+        print("  analyze <original_frames_json> <suspect_frames_json> - Analyze similarity")
+        sys.exit(1)
+    
+    command = sys.argv[1]
+    engine = VideoComparator()
+    
+    try:
+        if command == "health":
+            result = engine.health_check()
+            print(json.dumps(result, indent=2))
+        
+        elif command == "extract":
+            if len(sys.argv) < 3:
+                print("Usage: python3 feature_comparison.py extract <youtube_id>")
+                sys.exit(1)
+            
+            youtube_id = sys.argv[2]
+            frames = engine.extract_youtube_frames(youtube_id)
+            
+            result = {
+                "frames": [{
+                    "timestamp": frame.timestamp,
+                    "phash": frame.phash,
+                    "dct_hash": frame.dct_hash,
+                    "tf_embedding": frame.tf_embedding,
+                    "advanced_features": frame.advanced_features,
+                    "width": frame.width,
+                    "height": frame.height
+                } for frame in frames],
+                "total_frames": len(frames),
+                "success": True
+            }
+            
+            print(json.dumps(result, indent=2))
+        
+        elif command == "analyze":
+            if len(sys.argv) < 4:
+                print("Usage: python3 feature_comparison.py analyze <original_frames_json> <suspect_frames_json>")
+                sys.exit(1)
+            
+            with open(sys.argv[2], 'r') as f:
+                original_frames = json.load(f)
+            
+            with open(sys.argv[3], 'r') as f:
+                suspect_frames = json.load(f)
+            
+            result = engine.analyze_video_similarity(original_frames, suspect_frames)
+            
+            result_dict = {
+                "visual_similarity": result.visual_similarity,
+                "temporal_alignment": result.temporal_alignment,
+                "overall_confidence": result.overall_confidence,
+                "sequence_matches": result.sequence_matches,
+                "algorithm_details": result.algorithm_details,
+                "processing_time_ms": result.processing_time_ms,
+                "success": True
+            }
+            
+            print(json.dumps(result_dict, indent=2))
+        
+        else:
+            print(f"Unknown command: {command}")
+            sys.exit(1)
+    
+    except Exception as e:
+        error_result = {
+            "error": str(e),
+            "success": False
+        }
+        print(json.dumps(error_result))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

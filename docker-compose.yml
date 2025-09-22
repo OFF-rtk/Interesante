@@ -1,5 +1,7 @@
+version: '3.8'
+
 services:
-  # Backend - Your NestJS copyright detection API (CLEANED UP)
+  # Backend - Copyright Shield NestJS API (CLEANED UP)
   backend:
     build: 
       context: ./backend
@@ -9,32 +11,46 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=3001
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/copyright_detector
+      
+      # Database configuration
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/copyright_shield
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USERNAME=postgres
       - DB_PASSWORD=password
-      - DB_DATABASE=copyright_detector
-      - AI_SERVICE_URL=http://ai-service:5000  # NEW: AI service connection
+      - DB_DATABASE=copyright_shield
+      
+      # Copyright Shield specific configs
+      - AI_SERVICE_URL=http://ai-service:5000
+      - BASE_URL=http://localhost:3000
+      
+      # Authentication (Supabase) - from .env file
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - SUPABASE_PROJECT_REF=${SUPABASE_PROJECT_REF}
+      
+      # Cache
       - REDIS_URL=redis://redis:6379
-      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      
     env_file:
       - .env
     depends_on:
       postgres:
         condition: service_healthy
       ai-service:
-        condition: service_healthy  # NEW: Wait for AI service
+        condition: service_healthy
       redis:
         condition: service_started
     volumes:
       - ./backend:/app
       - /app/node_modules
-      - video_processing:/tmp/video-processing  # NEW: Shared volume
+      - video_uploads:/tmp/video-uploads
     networks:
-      - copyright-network
+      - copyright-shield-network
+    restart: unless-stopped
 
-  # Frontend - Your Next.js dashboard (UNCHANGED)
+  # Frontend - Copyright Shield Next.js Dashboard
   frontend:
     build:
       context: ./frontend
@@ -45,6 +61,12 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:3001
       - INTERNAL_API_URL=http://backend:3001
       - NODE_ENV=development
+      
+      # Copyright Shield branding
+      - NEXT_PUBLIC_APP_NAME=Copyright Shield
+      - NEXT_PUBLIC_CERTIFICATE_PRICE=7
+      - NEXT_PUBLIC_ANALYSIS_PRICE=25
+      
     depends_on:
       - backend
     volumes:
@@ -52,36 +74,45 @@ services:
       - /app/node_modules
       - /app/.next
     networks:
-      - copyright-network
+      - copyright-shield-network
+    restart: unless-stopped
 
-  # NEW: Python AI Service (Isolated ML Environment)
+  # AI Service - Copyright Shield ML Engine
   ai-service:
     build:
       context: ./ai-service
       dockerfile: Dockerfile
     ports:
-      - "5000:5000"  # Expose for debugging
+      - "5000:5000"
     environment:
       - PYTHONUNBUFFERED=1
       - FLASK_ENV=development
+      
+      # Copyright Shield specific configs
+      - MAX_VIDEO_SIZE_MB=100
+      - MAX_PROCESSING_TIME_SECONDS=300
+      - FRAME_EXTRACTION_LIMIT=50
+      - TEMP_DIR=/tmp/video-uploads
+      
     volumes:
       - ./ai-service:/app
-      - video_processing:/tmp/video-processing  # NEW: Shared volume for video files
+      - video_uploads:/tmp/video-uploads
     networks:
-      - copyright-network
+      - copyright-shield-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s  # Give time for TensorFlow to load
+      start_period: 40s
+    restart: unless-stopped
 
-  # PostgreSQL Database (UNCHANGED)
+  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
-    restart: always
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: copyright_detector
+      POSTGRES_DB: copyright_shield
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
       POSTGRES_HOST_AUTH_METHOD: trust
@@ -89,30 +120,38 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # REMOVED problematic init.sql mount until file exists
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d copyright_shield"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
     networks:
-      - copyright-network
+      - copyright-shield-network
 
-  # Redis - For future caching needs (UNCHANGED)
+  # Redis - Caching for certificates and analysis results
   redis:
     image: redis:7-alpine
-    restart: always
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
-      - copyright-network
+      - copyright-shield-network
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   postgres_data:
   redis_data:
-  video_processing:  # NEW: Shared volume for video files
+  video_uploads:
 
 networks:
-  copyright-network:
+  copyright-shield-network:
     driver: bridge
