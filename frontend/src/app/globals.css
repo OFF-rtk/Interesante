@@ -120,3 +120,102 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Fix container spacing and alignment issues */
+.container {
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* Responsive container widths */
+@media (min-width: 640px) {
+  .container {
+    max-width: 640px;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .container {
+    max-width: 768px;
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .container {
+    max-width: 1024px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .container {
+    max-width: 1280px;
+  }
+}
+
+@media (min-width: 1536px) {
+  .container {
+    max-width: 1536px;
+  }
+}
+
+/* Ensure proper box-sizing */
+* {
+  box-sizing: border-box;
+}
+
+/* Fix any overflow issues */
+html,
+body {
+  overflow-x: hidden;
+  width: 100%;
+}
+
+/* Smooth background animation (optional) */
+.bg-gradient-animation {
+  animation: float 20s ease-in-out infinite;
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+
+  33% {
+    transform: translateY(-10px) rotate(1deg);
+  }
+
+  66% {
+    transform: translateY(10px) rotate(-1deg);
+  }
+}
+
+/* Add subtle animation to background elements */
+.absolute.bg-gradient-to-br,
+.absolute.bg-gradient-to-bl,
+.absolute.bg-gradient-to-tl,
+.absolute.bg-gradient-to-tr {
+  animation: float 25s ease-in-out infinite;
+}
+
+/* Stagger the animations */
+.absolute.bg-gradient-to-br:nth-child(odd) {
+  animation-delay: -5s;
+}
+
+.absolute.bg-gradient-to-bl:nth-child(even) {
+  animation-delay: -10s;
+}
+
+.absolute.bg-gradient-to-tl:nth-child(3n) {
+  animation-delay: -15s;
+}
